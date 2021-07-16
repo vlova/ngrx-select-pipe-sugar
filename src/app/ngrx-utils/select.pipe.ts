@@ -33,6 +33,7 @@ class LRUCache<TKey, TValue> {
 
   getOrAdd(key: TKey, valueFactory: () => TValue) {
     if (this.seenKey !== key) {
+      this.seenKey = key;
       this.seenValue = valueFactory();
     }
 
