@@ -20,45 +20,53 @@ export class Select2Pipe implements PipeTransform {
   }
 
   transform<TSelectedState>(
-    mapFn: ForcedParameterlessSelector<TSelectedState>
+    selector: ForcedParameterlessSelector<TSelectedState>
   ): TSelectedState
   transform<TSelectedState, TSelectorProps extends any[], TSelectorArgs extends TSelectorProps>(
-    mapFn: (...args: TSelectorProps) => (state: any) => TSelectedState,
+    selectorFactory: (...args: TSelectorProps) => (state: any) => TSelectedState,
     ...args: TSelectorArgs
   ): TSelectedState
   transform<TArgs extends any[]>(
-    mapFn: any,
+    selectorOrFactory: any,
     ...args: TArgs
   ): any | null {
-    const state$ = this.getMappedState$<TArgs>(args, mapFn);
+    const state$ = this.getMappedState$<TArgs>(selectorOrFactory, args);
     return this.asyncPipe.transform(state$);
   }
 
-  private getMappedState$<TArgs extends any[]>(args: TArgs, mapFn: any) {
-    let state$: Observable<any>;
-    if (args.length === 0) {
-      const typedMapFn = mapFn as (state: any) => any;
-      state$ = this.store.select(typedMapFn);
-    } else {
-      const typedMapFn = mapFn as (...props: any[]) => (state: any) => any;
-      state$ = this.store.select(this.getMemoizedSelector(typedMapFn, args));
-    }
-    return state$;
+  private mappedState$Cache = new LRUCache<Function, Observable<any>>();
+  private getMappedState$<TArgs extends any[]>(mapFn: Function, args: TArgs) {
+    let selector = this.getOrMakeSelector<TArgs>(mapFn, args);
+    return this.mappedState$Cache.getOrAdd(mapFn, () => this.store.select(selector));
   }
 
-  private memoizedCacheKey: string | undefined;
-  private memoizedSelector: ((state: any) => any) | undefined;
+  private getOrMakeSelector<TArgs extends any[]>(selectorOrFactory: Function, args: TArgs) {
+    if (args.length === 0) {
+      return selectorOrFactory as (state: any) => any;
+    } else {
+      return this.makeSelectorInternal(selectorOrFactory as any, args);
+    }
+  }
 
-  private getMemoizedSelector<TArgs extends any[]>(
-    typedMapFn: (...args: TArgs) => (state: any) => any,
+  private selectorCache = new LRUCache<string, (state: any) => any>();
+  private makeSelectorInternal<TArgs extends any[]>(
+    selectorFactory: (...args: TArgs) => (state: any) => any,
     args: TArgs
   ): (state: any) => any {
-    const cacheKey = JSON.stringify(args);
-    if (this.memoizedCacheKey !== cacheKey) {
-      this.memoizedSelector = typedMapFn(...args);
-    }
-
-    return this.memoizedSelector!;
+    return this.selectorCache.getOrAdd(JSON.stringify(args), () => selectorFactory(...args));
   }
 }
 
+
+class LRUCache<TKey, TValue> {
+  private seenKey: TKey | undefined;
+  private seenValue: TValue | undefined;
+
+  getOrAdd(key: TKey, valueFactory: () => TValue) {
+    if (this.seenKey !== key) {
+      this.seenValue = valueFactory();
+    }
+
+    return this.seenValue!;
+  }
+}
